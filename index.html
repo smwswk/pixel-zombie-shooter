@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <link rel="icon" href="data:,">
+  <title>像素僵尸射击</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100dvh;
+      background: #111;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100dvh;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- 按依赖顺序加载模块 -->
+  <script src="core.js"></script>
+  <script src="config.js"></script>
+  <script src="particles.js"></script>
+  <script src="pickups.js"></script>
+  <script src="vehicles.js"></script>
+  <script src="weapon_player.js"></script>
+  <script src="turrets.js"></script>
+  <script src="pets.js"></script>
+  <script src="enemies.js"></script>
+  <script src="equipment.js"></script>
+  <script src="meta.js"></script>
+  <script src="ui.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
