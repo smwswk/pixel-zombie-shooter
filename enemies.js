@@ -84,6 +84,8 @@ class Enemy {
     this.burnDps = 0;
     this.frozen = false;
     this.frozenTimer = 0;
+    this.waveStrengthMultiplier = 1;
+    this.rewardMultiplier = 1;
 
     // 卡住检测
     this.stuckTimer = 0;
@@ -1260,7 +1262,7 @@ class Enemy {
       boss: 200,
       colossus: 800,
     };
-    return rewards[this.type] || 10;
+    return Math.round((rewards[this.type] || 10) * (this.rewardMultiplier || 1));
   }
 }
 
@@ -1556,7 +1558,22 @@ class EnemyManager {
     return enemy;
   }
 
+  _getWaveStrengthMultiplier(waveNumber = this.waveNumber) {
+    const decade = Math.max(0, Math.floor((Math.max(1, waveNumber) - 1) / 10));
+    return Math.pow(3, decade);
+  }
+
   _applyLateWaveVariants(enemy) {
+    const strengthMult = this._getWaveStrengthMultiplier();
+    enemy.waveStrengthMultiplier = strengthMult;
+    enemy.rewardMultiplier = strengthMult;
+    if (strengthMult > 1) {
+      const hpRatio = enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 1;
+      enemy.maxHp = Math.max(1, Math.round(enemy.maxHp * strengthMult));
+      enemy.hp = Math.max(1, Math.round(enemy.maxHp * hpRatio));
+      enemy.damage = Math.max(1, Math.round(enemy.damage * strengthMult));
+    }
+
     if (this.currentEvent && this.currentEvent.enemySpeedMult) {
       enemy.speed *= this.currentEvent.enemySpeedMult;
     }
