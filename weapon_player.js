@@ -3,6 +3,83 @@
 // 全局变量模式，通过 script 标签按顺序加载
 // ============================================================
 
+const FUSION_WEAPON_TRAITS = {
+  pistol: { word: '短火', effect: 'quickdraw', priority: 10, color: '#ffe08a' },
+  smg: { word: '蜂群', effect: 'barrage', priority: 20, color: '#facc15' },
+  rifle: { word: '突击', effect: 'mark', priority: 30, color: '#a3e635' },
+  shotgun: { word: '霰裂', effect: 'scatter', priority: 40, color: '#fb923c' },
+  sniper: { word: '断点', effect: 'execute', priority: 50, color: '#fde047' },
+  machinegun: { word: '旋轮', effect: 'barrage', priority: 60, color: '#f97316' },
+  flamethrower: { word: '熔焰', effect: 'burn', priority: 70, color: '#fb4515' },
+  rocket: { word: '爆核', effect: 'blast', priority: 80, color: '#ef4444' },
+  laser: { word: '棱镜', effect: 'beam', priority: 90, color: '#38bdf8' },
+  railgun: { word: '电磁', effect: 'chain', priority: 100, color: '#22d3ee' },
+  crossbow: { word: '回收', effect: 'retrieve', priority: 110, color: '#d6a46d' },
+  chainsaw: { word: '绞盘', effect: 'grind', priority: 120, color: '#fb7185' },
+  sunblade: { word: '日冕', effect: 'solar', priority: 130, color: '#ffd166' },
+  void_lance: { word: '虚空', effect: 'void', priority: 140, color: '#c084fc' },
+  storm_cannon: { word: '雷暴', effect: 'storm', priority: 150, color: '#67e8f9' },
+};
+
+const FUSION_PROFILE_SUFFIX = {
+  plasma: '链焰',
+  void: '奇点',
+  storm: '雷链',
+  solar: '日冕',
+  grinder: '绞盘',
+  scatter: '散射',
+  burst: '弹头',
+  prism: '矩阵',
+  kinetic: '核心',
+};
+
+const FUSION_PAIR_OVERRIDES = {
+  flamethrower__railgun: {
+    name: '等离子链焰',
+    profile: 'plasma',
+    special: 'plasma_chain_flame',
+    fusionArchetype: 'plasma_chain_flame',
+  },
+  shotgun__void_lance: {
+    name: '黑洞散射',
+    profile: 'void',
+    special: 'void_scatter',
+    fusionArchetype: 'void_scatter',
+  },
+  rocket__sunblade: {
+    name: '太阳弹头',
+    profile: 'solar',
+    special: 'solar_warhead',
+    fusionArchetype: 'solar_warhead',
+  },
+};
+
+function getFusionPairKey(ids) {
+  return ids.slice().sort().join('__');
+}
+
+function getFusionTraits(ids) {
+  return ids.map(id => FUSION_WEAPON_TRAITS[id] || {
+    word: (WEAPON_DATA[id] && WEAPON_DATA[id].name) || '异化',
+    effect: 'mark',
+    priority: 999,
+    color: '#ffcc66',
+  });
+}
+
+function pickFusionProfile(effects) {
+  const has = effect => effects.includes(effect);
+  if (has('burn') && (has('chain') || has('storm'))) return 'plasma';
+  if (has('void')) return 'void';
+  if (has('chain') || has('storm')) return 'storm';
+  if (has('solar')) return 'solar';
+  if (has('grind')) return 'grinder';
+  if (has('scatter')) return 'scatter';
+  if (has('blast')) return 'burst';
+  if (has('beam')) return 'prism';
+  return 'kinetic';
+}
+
 // ------------------------------------------------------------------
 // Weapon 类
 // ------------------------------------------------------------------
@@ -110,10 +187,10 @@ class Weapon {
     }
     if (this.rarity === 'fusion') {
       return {
-        damageMult: 1.12,
-        fireRateMult: 1.06,
-        reloadMult: 0.94,
-        magMult: 1.12,
+        damageMult: 1.06,
+        fireRateMult: 1.03,
+        reloadMult: 0.96,
+        magMult: 1.08,
         projectileBonus: 0,
         piercingBonus: 1,
         explosiveBonus: 0,
@@ -186,9 +263,11 @@ class Weapon {
     const bonus = this.getProficiencyBonus();
     const affix = this._getAffixMods();
     const rarity = this._getRarityMods();
-    const fusionDamage = 1 + this.fusionLevel * 0.12;
-    const fusionFireRate = 1 + this.fusionLevel * 0.08;
-    const fusionMag = 1 + this.fusionLevel * 0.10;
+    const fusionSteps = Math.max(0, this.fusionLevel);
+    const fusionCurve = Math.log1p(fusionSteps);
+    const fusionDamage = 1 + Math.min(0.55, fusionCurve * 0.075);
+    const fusionFireRate = 1 + Math.min(0.3, fusionCurve * 0.045);
+    const fusionMag = 1 + Math.min(0.75, fusionCurve * 0.08);
     return {
       damage: Math.round(this.data.damage * bonus.damageMult * fusionDamage * affix.damageMult * rarity.damageMult),
       fireRate: this.data.fireRate * bonus.fireRateMult * fusionFireRate * affix.fireRateMult * rarity.fireRateMult,
@@ -200,6 +279,10 @@ class Weapon {
   getEffectiveWeaponData(stats = this.getEffectiveStats()) {
     const affix = this._getAffixMods();
     const rarity = this._getRarityMods();
+    const baseProjectileCount = Math.max(1, this.data.projectileCount || 1);
+    const allowFusionProjectileBonus = !this.data.fusionWeapon || baseProjectileCount > 1;
+    const affixProjectileBonus = allowFusionProjectileBonus ? Math.min(1, affix.projectileBonus) : 0;
+    const rarityProjectileBonus = allowFusionProjectileBonus ? rarity.projectileBonus : 0;
     return {
       ...this.data,
       damage: stats.damage,
@@ -207,9 +290,9 @@ class Weapon {
       magazine: stats.magazine,
       reloadTime: stats.reloadTime,
       spread: (this.data.spread || 0) * affix.spreadMult,
-      piercing: (this.data.piercing || 0) + affix.piercingBonus + rarity.piercingBonus + Math.floor(this.fusionLevel / 2),
+      piercing: (this.data.piercing || 0) + affix.piercingBonus + rarity.piercingBonus + Math.min(4, Math.floor(Math.log2(this.fusionLevel + 1))),
       explosive: (this.data.explosive || 0) + affix.explosiveBonus + rarity.explosiveBonus,
-      projectileCount: Math.max(1, (this.data.projectileCount || 1) + affix.projectileBonus + rarity.projectileBonus + Math.floor(this.fusionLevel / 4)),
+      projectileCount: Math.max(1, baseProjectileCount + affixProjectileBonus + rarityProjectileBonus + Math.min(2, Math.floor(Math.log2(this.fusionLevel + 1) / 2))),
       fusionLevel: this.fusionLevel,
       affixes: [...this.affixes],
       rarity: this.rarity,
@@ -240,7 +323,7 @@ class Weapon {
 
   _syncDisplayName() {
     const rarityPrefix = this.rarity === 'legendary' ? '传说 ' : (this.rarity === 'hero' ? '英雄 ' : '');
-    const fusionSuffix = this.fusionLevel > 0 ? ` +${this.fusionLevel}` : '';
+    const fusionSuffix = this.fusionLevel > 0 ? ` 融合Lv.${this.fusionLevel}` : '';
     this.name = `${rarityPrefix}${this.baseName}${fusionSuffix}`;
   }
 
@@ -552,6 +635,7 @@ class Projectile {
     } else if (this.weaponData.special === 'storm_chain' && enemy.applyControlEffect) {
       enemy.applyControlEffect({ stun: this.weaponData.stunDuration || 0.2 });
     }
+    this._applyComboFusionEffect(enemy);
 
     // 生命偷取
     if (this.owner.upgrades.lifesteal > 0) {
@@ -590,6 +674,150 @@ class Projectile {
     // 血液粒子
     game.particles.spawnBlood(enemy.x, enemy.y, this.isCrit ? 8 : 4);
     this._spawnImpactBurst(enemy);
+  }
+
+  _applyComboFusionEffect(enemy) {
+    const combo = this.weaponData.comboEffect;
+    if (!combo || !Array.isArray(combo.effects)) return;
+    const effects = [...new Set(combo.effects)];
+    for (const effect of effects) {
+      switch (effect) {
+        case 'quickdraw':
+          enemy.applyControlEffect && enemy.applyControlEffect({ mark: 0.55, markDamageMult: 1.04 });
+          break;
+        case 'barrage':
+          enemy.applyControlEffect && enemy.applyControlEffect({ slow: 0.35, slowMult: 0.88 });
+          break;
+        case 'mark':
+        case 'beam':
+          enemy.applyControlEffect && enemy.applyControlEffect({ mark: 0.85, markDamageMult: effect === 'beam' ? 1.07 : 1.05 });
+          break;
+        case 'scatter':
+          this._comboPulse(enemy, 52, 0.1, combo.colorA || '#ffcc66');
+          break;
+        case 'execute':
+          if (enemy.hp < (enemy.maxHp || enemy.hp) * 0.35) {
+            enemy.takeDamage(this._comboDamage(0.16), this);
+          } else {
+            enemy.applyControlEffect && enemy.applyControlEffect({ mark: 0.75, markDamageMult: 1.05 });
+          }
+          break;
+        case 'burn':
+          this._comboBurn(enemy, 0.09, 1.3);
+          break;
+        case 'solar':
+          this._comboBurn(enemy, 0.12, 1.7);
+          enemy.applyControlEffect && enemy.applyControlEffect({ mark: 0.9, markDamageMult: 1.06 });
+          break;
+        case 'blast':
+          this._comboPulse(enemy, 68, 0.16, '#ff8844');
+          break;
+        case 'chain':
+        case 'storm':
+          this._comboChain(enemy, effect === 'storm' ? 2 : 1, effect === 'storm' ? 0.16 : 0.13);
+          break;
+        case 'void':
+          this._comboVoidPull(enemy);
+          break;
+        case 'retrieve':
+          enemy.applyControlEffect && enemy.applyControlEffect({ slow: 0.45, slowMult: 0.82 });
+          break;
+        case 'grind':
+          enemy.applyControlEffect && enemy.applyControlEffect({ slow: 0.35, slowMult: 0.78 });
+          if (this.owner && this.owner.heal) this.owner.heal(this._comboDamage(0.06) * 0.35);
+          break;
+      }
+    }
+  }
+
+  _comboDamage(mult) {
+    return Math.max(1, Math.round(this.damage * mult));
+  }
+
+  _comboBurn(enemy, mult, duration) {
+    enemy.burning = true;
+    enemy.burnTimer = Math.max(enemy.burnTimer || 0, duration);
+    enemy.burnDps = Math.max(enemy.burnDps || 0, this._comboDamage(mult));
+  }
+
+  _comboPulse(anchor, radius, mult, color) {
+    const damage = this._comboDamage(mult);
+    for (const enemy of game.enemies) {
+      if (!enemy.alive || enemy === anchor) continue;
+      const d = dist(anchor.x, anchor.y, enemy.x, enemy.y);
+      if (d > radius + enemy.radius) continue;
+      enemy.takeDamage(damage, this);
+      enemy.applyControlEffect && enemy.applyControlEffect({ slow: 0.25, slowMult: 0.9 });
+      if (game.particles && Math.random() < 0.35) {
+        game.particles.push(new Particle(
+          enemy.x,
+          enemy.y,
+          (Math.random() - 0.5) * 42,
+          (Math.random() - 0.5) * 42,
+          0.16 + Math.random() * 0.16,
+          color,
+          2 + Math.random() * 1.5
+        ));
+      }
+    }
+  }
+
+  _comboChain(anchor, jumps, mult) {
+    const damage = this._comboDamage(mult);
+    const visited = new Set([anchor]);
+    let current = anchor;
+    for (let i = 0; i < jumps; i++) {
+      let closest = null;
+      let closestDist = 135;
+      for (const enemy of game.enemies) {
+        if (!enemy.alive || visited.has(enemy)) continue;
+        const d = dist(current.x, current.y, enemy.x, enemy.y);
+        if (d < closestDist) {
+          closest = enemy;
+          closestDist = d;
+        }
+      }
+      if (!closest) break;
+      visited.add(closest);
+      closest.takeDamage(damage, this);
+      closest.applyControlEffect && closest.applyControlEffect({ mark: 0.65, markDamageMult: 1.04 });
+      if (game.particles) {
+        const steps = Math.max(1, Math.ceil(closestDist / 16));
+        for (let s = 0; s <= steps; s++) {
+          const t = s / steps;
+          game.particles.push(new Particle(
+            lerp(current.x, closest.x, t),
+            lerp(current.y, closest.y, t),
+            (Math.random() - 0.5) * 24,
+            (Math.random() - 0.5) * 24,
+            0.12 + Math.random() * 0.12,
+            '#66ffff',
+            1.5 + Math.random()
+          ));
+        }
+      }
+      current = closest;
+    }
+  }
+
+  _comboVoidPull(anchor) {
+    const radius = 76;
+    const damage = this._comboDamage(0.1);
+    for (const enemy of game.enemies) {
+      if (!enemy.alive || enemy === anchor) continue;
+      const d = dist(anchor.x, anchor.y, enemy.x, enemy.y);
+      if (d > radius + enemy.radius) continue;
+      enemy.takeDamage(damage, this);
+      const pull = Math.max(8, 26 * (1 - d / (radius + enemy.radius)));
+      const a = angleTo(enemy.x, enemy.y, anchor.x, anchor.y);
+      const nx = enemy.x + Math.cos(a) * pull;
+      const ny = enemy.y + Math.sin(a) * pull;
+      if (game.map.isWalkable(nx, ny, enemy.radius)) {
+        enemy.x = nx;
+        enemy.y = ny;
+      }
+      enemy.applyControlEffect && enemy.applyControlEffect({ slow: 0.55, slowMult: 0.82 });
+    }
   }
 
   _spawnVisualTrail() {
@@ -1586,12 +1814,11 @@ class Player {
   }
 
   _createFusionWeaponData(weaponA, weaponB) {
-    const dataA = weaponA.getEffectiveWeaponData();
-    const dataB = weaponB.getEffectiveWeaponData();
+    const dataA = this._getFusionSourceData(weaponA);
+    const dataB = this._getFusionSourceData(weaponB);
     const idA = weaponA.data.id;
     const idB = weaponB.data.id;
-    const nameA = weaponA.baseName || weaponA.data.name;
-    const nameB = weaponB.baseName || weaponB.data.name;
+    const identity = this._getFusionIdentity(idA, idB);
     const finiteMags = [dataA.magazine, dataB.magazine].filter(Number.isFinite);
     const magazine = finiteMags.length === 0
       ? Infinity
@@ -1599,26 +1826,26 @@ class Player {
     const finiteSpeeds = [dataA.projectileSpeed, dataB.projectileSpeed]
       .map(speed => Number.isFinite(speed) ? speed : 1400)
       .filter(speed => speed > 0);
-    const projectileSpeed = Math.max(520, Math.min(2200, Math.round((finiteSpeeds.length ? Math.max(...finiteSpeeds) : 620) * 1.05)));
+    const projectileSpeed = Math.max(520, Math.min(2000, Math.round((finiteSpeeds.length ? Math.max(...finiteSpeeds) : 620) * 1.02)));
     const maxDamage = Math.max(dataA.damage, dataB.damage);
     const minDamage = Math.min(dataA.damage, dataB.damage);
     const maxFireRate = Math.max(dataA.fireRate, dataB.fireRate);
     const avgFireRate = (dataA.fireRate + dataB.fireRate) / 2;
-    const projectileCount = Math.max(dataA.projectileCount || 1, dataB.projectileCount || 1)
-      + (((dataA.projectileCount || 1) > 1 || (dataB.projectileCount || 1) > 1) ? 1 : 0);
-    const explosive = Math.round(Math.max(dataA.explosive || 0, dataB.explosive || 0) + Math.min(dataA.explosive || 0, dataB.explosive || 0) * 0.35);
+    const maxProjectileCount = Math.max(dataA.projectileCount || 1, dataB.projectileCount || 1);
+    const projectileCount = Math.min(8, maxProjectileCount + (maxProjectileCount > 1 ? 1 : 0));
+    const explosive = Math.round(Math.max(dataA.explosive || 0, dataB.explosive || 0) + Math.min(dataA.explosive || 0, dataB.explosive || 0) * 0.22);
     const rarity = (weaponA.rarity === 'legendary' || weaponB.rarity === 'legendary')
       ? 'legendary'
       : ((weaponA.rarity === 'hero' || weaponB.rarity === 'hero') ? 'hero' : 'fusion');
 
     const fusionData = {
       id: `fusion_${idA}_${idB}_${Date.now().toString(36)}`,
-      name: `${nameA}+${nameB}`,
-      damage: Math.max(1, Math.round(maxDamage * 1.18 + minDamage * 0.72)),
-      fireRate: Math.max(0.2, maxFireRate * 0.85 + avgFireRate * 0.2),
+      name: identity.name,
+      damage: Math.max(1, Math.round(maxDamage * 1.04 + minDamage * 0.28)),
+      fireRate: Math.max(0.2, Math.min(maxFireRate * 1.03, maxFireRate * 0.74 + avgFireRate * 0.14)),
       magazine,
-      reloadTime: Math.max(0.3, Math.min(dataA.reloadTime || 1, dataB.reloadTime || 1) * 0.85),
-      spread: Math.min(dataA.spread || 0, dataB.spread || 0) * 0.9,
+      reloadTime: Math.max(0.3, Math.min(dataA.reloadTime || 1, dataB.reloadTime || 1) * 0.9),
+      spread: Math.min(dataA.spread || 0, dataB.spread || 0) * 0.92,
       projectileSpeed,
       piercing: Math.max(dataA.piercing || 0, dataB.piercing || 0) + 1,
       explosive,
@@ -1632,12 +1859,88 @@ class Player {
       hidden: true,
       fusionWeapon: true,
       components: [idA, idB],
+      fusionPairKey: identity.pairKey,
+      comboEffect: identity.comboEffect,
       rarity,
     };
-    return this._applyFusionArchetype(fusionData, weaponA, weaponB, dataA, dataB);
+    return this._limitFusionPower(this._applyFusionArchetype(fusionData, weaponA, weaponB, dataA, dataB, identity), dataA, dataB);
   }
 
-  _applyFusionArchetype(fusionData, weaponA, weaponB, dataA, dataB) {
+  _getFusionSourceData(weapon) {
+    const data = weapon.data || {};
+    return {
+      ...data,
+      damage: Math.max(1, data.damage || 1),
+      fireRate: Math.max(0.2, data.fireRate || 1),
+      magazine: data.magazine === Infinity ? Infinity : Math.max(1, data.magazine || 1),
+      reloadTime: Math.max(0, data.reloadTime || 0),
+      spread: data.spread || 0,
+      projectileSpeed: Number.isFinite(data.projectileSpeed) ? data.projectileSpeed : 1400,
+      piercing: data.piercing || 0,
+      explosive: data.explosive || 0,
+      projectileCount: Math.max(1, data.projectileCount || 1),
+    };
+  }
+
+  _getFusionIdentity(idA, idB) {
+    const ids = [idA, idB];
+    const pairKey = getFusionPairKey(ids);
+    const override = FUSION_PAIR_OVERRIDES[pairKey] || null;
+    const traits = getFusionTraits(ids).sort((a, b) => a.priority - b.priority);
+    const effects = traits.map(trait => trait.effect);
+    const profile = override ? override.profile : pickFusionProfile(effects);
+    let name = override && override.name;
+    if (!name) {
+      if (profile === 'grinder') {
+        const other = traits.find(trait => trait.effect !== 'grind') || traits[0];
+        name = `${other.word}${FUSION_PROFILE_SUFFIX.grinder}`;
+      } else {
+        name = `${traits[0].word}${traits[1].word}${FUSION_PROFILE_SUFFIX[profile] || FUSION_PROFILE_SUFFIX.kinetic}`;
+      }
+    }
+
+    return {
+      pairKey,
+      name,
+      profile,
+      comboEffect: {
+        key: `${profile}:${pairKey}`,
+        name,
+        profile,
+        effects,
+        primary: effects[0],
+        secondary: effects[1],
+        colorA: traits[0].color,
+        colorB: traits[1].color,
+      },
+      override,
+    };
+  }
+
+  _fusionPowerScore(data) {
+    return Math.max(1, data.damage || 1)
+      * Math.max(0.2, data.fireRate || 1)
+      * Math.max(1, data.projectileCount || 1);
+  }
+
+  _limitFusionPower(fusionData, dataA, dataB) {
+    const maxSourcePower = Math.max(this._fusionPowerScore(dataA), this._fusionPowerScore(dataB));
+    const cap = Math.max(maxSourcePower * 1.28, maxSourcePower + 20);
+    const fusionPower = this._fusionPowerScore(fusionData);
+    if (fusionPower <= cap) return fusionData;
+
+    const ratio = cap / fusionPower;
+    const fireScale = Math.max(0.45, Math.sqrt(ratio));
+    const damageScale = ratio / fireScale;
+    return {
+      ...fusionData,
+      damage: Math.max(1, Math.round(fusionData.damage * damageScale)),
+      fireRate: Math.max(0.2, fusionData.fireRate * fireScale),
+      powerLimited: true,
+    };
+  }
+
+  _applyFusionArchetype(fusionData, weaponA, weaponB, dataA, dataB, identity) {
     const ids = [weaponA.data.id, weaponB.data.id];
     const has = (...needles) => needles.some(id => ids.includes(id));
 
@@ -1645,8 +1948,8 @@ class Player {
       return {
         ...fusionData,
         name: '等离子链焰',
-        damage: Math.max(fusionData.damage, 42),
-        fireRate: Math.max(fusionData.fireRate, 15),
+        damage: Math.max(fusionData.damage, 18),
+        fireRate: Math.max(fusionData.fireRate, 10),
         magazine: Infinity,
         reloadTime: 0,
         spread: FLAMETHROWER_ANGLE,
@@ -1658,9 +1961,10 @@ class Player {
         continuous: true,
         special: 'plasma_chain_flame',
         fusionArchetype: 'plasma_chain_flame',
+        comboEffect: identity.comboEffect,
         chainRange: 125,
-        chainDamageMult: 0.52,
-        burnDamage: 16,
+        chainDamageMult: 0.26,
+        burnDamage: 8,
       };
     }
 
@@ -1668,7 +1972,7 @@ class Player {
       return {
         ...fusionData,
         name: '黑洞散射',
-        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 0.82)),
+        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 0.24)),
         fireRate: Math.max(0.85, fusionData.fireRate * 0.78),
         spread: Math.max(fusionData.spread, 0.24),
         projectileSpeed: Math.max(820, fusionData.projectileSpeed),
@@ -1679,18 +1983,22 @@ class Player {
         continuous: false,
         special: 'void_scatter',
         fusionArchetype: 'void_scatter',
+        comboEffect: identity.comboEffect,
         riftRadius: 135,
-        riftDamage: 82,
+        riftDamage: 46,
         pullStrength: 48,
       };
     }
 
     if ((has('sniper') || has('rifle') || has('crossbow')) && (has('storm_cannon') || has('railgun'))) {
+      const stormName = identity.override && identity.override.name
+        ? identity.override.name
+        : identity.name;
       return {
         ...fusionData,
-        name: '雷暴穿刺',
-        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 1.15)),
-        fireRate: Math.max(fusionData.fireRate, 2.1),
+        name: stormName,
+        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 0.78)),
+        fireRate: Math.max(fusionData.fireRate, 1.35),
         spread: Math.min(fusionData.spread, 0.02),
         projectileSpeed: Math.max(fusionData.projectileSpeed, 1500),
         piercing: Math.max(fusionData.piercing, 8),
@@ -1698,10 +2006,11 @@ class Player {
         projectileCount: Math.max(fusionData.projectileCount, 2),
         continuous: false,
         special: 'storm_chain',
-        fusionArchetype: 'storm_lance',
-        chainJumps: 8,
-        chainRange: 230,
-        chainDamageMult: 0.68,
+        fusionArchetype: `storm_lance_${identity.pairKey}`,
+        comboEffect: identity.comboEffect,
+        chainJumps: 5,
+        chainRange: 210,
+        chainDamageMult: 0.34,
         stunDuration: 0.32,
       };
     }
@@ -1710,7 +2019,7 @@ class Player {
       return {
         ...fusionData,
         name: '太阳弹头',
-        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 1.1)),
+        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 0.72)),
         fireRate: Math.max(0.7, fusionData.fireRate * 0.76),
         spread: Math.min(fusionData.spread, 0.04),
         projectileSpeed: Math.max(fusionData.projectileSpeed, 620),
@@ -1721,17 +2030,18 @@ class Player {
         continuous: false,
         special: 'solar_warhead',
         fusionArchetype: 'solar_warhead',
-        burnDamage: 28,
-        burnDuration: 3.4,
+        comboEffect: identity.comboEffect,
+        burnDamage: 16,
+        burnDuration: 3.0,
       };
     }
 
     if (has('chainsaw')) {
       return {
         ...fusionData,
-        name: '血肉绞盘',
-        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 1.05)),
-        fireRate: Math.max(fusionData.fireRate, 11),
+        name: identity.name,
+        damage: Math.max(fusionData.damage, Math.round(Math.max(dataA.damage, dataB.damage) * 0.64)),
+        fireRate: Math.max(fusionData.fireRate, 8.5),
         magazine: Infinity,
         reloadTime: 0,
         spread: 0,
@@ -1743,15 +2053,17 @@ class Player {
         continuous: true,
         melee: true,
         special: 'vampire_saw',
-        fusionArchetype: 'vampire_saw',
-        lifestealOnHit: 0.08,
+        fusionArchetype: `vampire_saw_${identity.pairKey}`,
+        comboEffect: identity.comboEffect,
+        lifestealOnHit: 0.04,
       };
     }
 
     return {
       ...fusionData,
       special: fusionData.chain ? 'fusion_chain' : (fusionData.explosive > 0 ? 'fusion_burst' : 'fusion_core'),
-      fusionArchetype: fusionData.chain ? 'chain_core' : (fusionData.explosive > 0 ? 'burst_core' : 'kinetic_core'),
+      fusionArchetype: `${identity.profile}_${identity.pairKey}`,
+      comboEffect: identity.comboEffect,
     };
   }
 
