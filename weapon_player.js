@@ -19,6 +19,9 @@ const FUSION_WEAPON_TRAITS = {
   sunblade: { word: '日冕', effect: 'solar', priority: 130, color: '#ffd166' },
   void_lance: { word: '虚空', effect: 'void', priority: 140, color: '#c084fc' },
   storm_cannon: { word: '雷暴', effect: 'storm', priority: 150, color: '#67e8f9' },
+  plasma_flame: { word: '等离子', effect: 'burn', priority: 160, color: '#5eead4' },
+  gauss_shotgun: { word: '高斯', effect: 'scatter', priority: 170, color: '#93c5fd' },
+  nuke_launcher: { word: '核弹', effect: 'blast', priority: 180, color: '#fca5a5' },
 };
 
 const FUSION_PROFILE_SUFFIX = {
@@ -1361,6 +1364,12 @@ class Player {
     // 经济
     this.money = 0;
 
+    // 人物等级：击杀经验触发局内升级选择，替代每波结束固定三选一
+    this.level = 1;
+    this.xp = 0;
+    this.xpToNext = this._calcPlayerXPToNext(this.level);
+    this.pendingLevelUps = 0;
+
     // 连击
     this.combo = 0;
     this.maxCombo = 0;
@@ -1421,6 +1430,33 @@ class Player {
       damage: { active: false, timer: 0, mult: 1.5 },
       shield: { active: false, timer: 0 },
     };
+  }
+
+  _calcPlayerXPToNext(level) {
+    return Math.floor(80 + level * 45 + Math.pow(level, 1.25) * 35);
+  }
+
+  addXP(amount) {
+    if (!Number.isFinite(amount) || amount <= 0) return false;
+    this.xp += Math.round(amount);
+    let leveled = false;
+    while (this.xp >= this.xpToNext) {
+      this.xp -= this.xpToNext;
+      this.level++;
+      this.pendingLevelUps++;
+      this.xpToNext = this._calcPlayerXPToNext(this.level);
+      leveled = true;
+      if (typeof game !== 'undefined' && game.floatingTexts) {
+        game.floatingTexts.push(new FloatingText(
+          this.x, this.y - this.radius - 48,
+          `角色 Lv.${this.level}`, '#ffd166', 22
+        ));
+      }
+    }
+    if (leveled && typeof game !== 'undefined' && game.upgradeSystem) {
+      game.upgradeSystem.queueLevelUp(this);
+    }
+    return leveled;
   }
 
   update(dt) {

@@ -455,7 +455,9 @@ class Input {
 
     if (btn.skillId && typeof game !== 'undefined' && game.heroSkillSystem) {
       const cooldown = game.heroSkillSystem.cooldowns[btn.skillId] || 0;
-      const skill = game.heroSkillSystem.skills[btn.skillId];
+      const skill = game.heroSkillSystem.getEffectiveSkill
+        ? game.heroSkillSystem.getEffectiveSkill(btn.skillId)
+        : game.heroSkillSystem.skills[btn.skillId];
       if (cooldown > 0 && skill) {
         const ratio = Math.max(0, Math.min(1, cooldown / skill.cooldown));
         ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';

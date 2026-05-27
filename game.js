@@ -171,6 +171,12 @@ function initGame() {
   if (saveData) {
     // 恢复金钱
     game.player.money = saveData.money || 0;
+    if (saveData.playerLevel) {
+      game.player.level = Math.max(1, saveData.playerLevel || 1);
+      game.player.xp = Math.max(0, saveData.playerXP || 0);
+      game.player.xpToNext = Math.max(1, saveData.playerXPToNext || game.player._calcPlayerXPToNext(game.player.level));
+      game.player.pendingLevelUps = Math.max(0, saveData.pendingLevelUps || 0);
+    }
     // 恢复 upgrades
     if (saveData.upgrades) {
       for (const key in saveData.upgrades) {
@@ -209,8 +215,8 @@ function initGame() {
     }
     restorePlayerWeaponsFromSave(saveData);
     // 恢复英雄技能解锁
-    if (saveData.unlockedSkills && game.heroSkillSystem) {
-      game.heroSkillSystem.restoreUnlocked(saveData.unlockedSkills);
+    if ((saveData.skillProgress || saveData.unlockedSkills) && game.heroSkillSystem) {
+      game.heroSkillSystem.restoreUnlocked(saveData.skillProgress || saveData.unlockedSkills);
     }
     // 恢复炮台
     if (saveData.turrets && game.turretManager) {
@@ -507,6 +513,12 @@ function restartGame() {
     const saveData = game.saveSystem.load();
     if (saveData) {
       game.player.money = saveData.money || 0;
+      if (saveData.playerLevel) {
+        game.player.level = Math.max(1, saveData.playerLevel || 1);
+        game.player.xp = Math.max(0, saveData.playerXP || 0);
+        game.player.xpToNext = Math.max(1, saveData.playerXPToNext || game.player._calcPlayerXPToNext(game.player.level));
+        game.player.pendingLevelUps = Math.max(0, saveData.pendingLevelUps || 0);
+      }
       if (saveData.upgrades) {
         for (const key in saveData.upgrades) {
           if (game.player.upgrades[key] !== undefined) {
@@ -542,8 +554,8 @@ function restartGame() {
         }
       }
       restorePlayerWeaponsFromSave(saveData);
-      if (saveData.unlockedSkills && game.heroSkillSystem) {
-        game.heroSkillSystem.restoreUnlocked(saveData.unlockedSkills);
+      if ((saveData.skillProgress || saveData.unlockedSkills) && game.heroSkillSystem) {
+        game.heroSkillSystem.restoreUnlocked(saveData.skillProgress || saveData.unlockedSkills);
       }
       if (saveData.turrets && game.turretManager) {
         game.turretManager.restore(saveData.turrets);
@@ -1063,6 +1075,17 @@ function drawHUD(ctx, player, waveManager) {
   ctx.font = mobileHUD.mobile ? 'bold 10px monospace' : 'bold 11px monospace';
   ctx.textAlign = 'center';
   ctx.fillText(`HP ${Math.ceil(player.hp)}/${player.maxHp}`, barX + barW / 2, barY + 12);
+
+  // 人物等级经验条
+  const levelY = Math.max(8, barY - (mobileHUD.mobile ? 16 : 18));
+  const playerXpRatio = player.xpToNext ? Math.max(0, Math.min(1, player.xp / player.xpToNext)) : 0;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(barX, levelY, barW, mobileHUD.mobile ? 8 : 10);
+  ctx.fillStyle = '#ffd166';
+  ctx.fillRect(barX, levelY, barW * playerXpRatio, mobileHUD.mobile ? 8 : 10);
+  ctx.fillStyle = '#111';
+  ctx.font = mobileHUD.mobile ? 'bold 8px monospace' : 'bold 9px monospace';
+  ctx.fillText(`角色 Lv.${player.level || 1}`, barX + barW / 2, levelY + (mobileHUD.mobile ? 7 : 9));
 
   // 护甲条（在HP条下方）
   if (player.armor > 0) {

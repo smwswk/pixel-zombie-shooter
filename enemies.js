@@ -1186,6 +1186,9 @@ class Enemy {
 
     // 发放金币 + 分数
     if (game.player) {
+      if (game.player.addXP) {
+        game.player.addXP(reward);
+      }
       const comboMult = game.player.addKill();
       const gold = Math.round(reward * 0.5 * comboMult);
       game.player.money += gold;

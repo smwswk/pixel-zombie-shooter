@@ -887,11 +887,13 @@ class HeroSkillSystem {
   constructor() {
     this.skills = HERO_SKILL_DATA;
     this.unlocked = {};
+    this.levels = {};
     this.cooldowns = {};
     this.noticeTimers = {};
     this.activeEffects = [];
     for (const id of Object.keys(this.skills)) {
       this.unlocked[id] = false;
+      this.levels[id] = 0;
       this.cooldowns[id] = 0;
       this.noticeTimers[id] = 0;
     }
@@ -916,12 +918,66 @@ class HeroSkillSystem {
   restoreUnlocked(ids) {
     for (const id of Object.keys(this.unlocked)) {
       this.unlocked[id] = false;
+      this.levels[id] = 0;
       this.cooldowns[id] = 0;
     }
     if (!Array.isArray(ids)) return;
-    for (const id of ids) {
-      if (this.skills[id]) this.unlocked[id] = true;
+    for (const entry of ids) {
+      const id = typeof entry === 'string' ? entry : entry && entry.id;
+      if (!this.skills[id]) continue;
+      const level = typeof entry === 'object' ? Math.max(1, entry.level || 1) : 1;
+      this.unlocked[id] = true;
+      this.levels[id] = level;
     }
+  }
+
+  getSkillLevel(id) {
+    return this.unlocked[id] ? Math.max(1, this.levels[id] || 1) : 0;
+  }
+
+  getSkillProgress() {
+    return Object.keys(this.skills)
+      .filter(id => this.unlocked[id])
+      .map(id => ({ id, level: this.getSkillLevel(id) }));
+  }
+
+  getEffectiveSkill(id) {
+    const base = this.skills[id];
+    if (!base) return null;
+    const level = Math.max(1, this.getSkillLevel(id) || 1);
+    const step = Math.max(0, level - 1);
+    const damageMult = 1 + step * 0.18;
+    const rangeMult = 1 + Math.min(0.45, step * 0.06);
+    const cooldownMult = Math.max(0.62, 1 - step * 0.055);
+    const skill = { ...base, level };
+    for (const key of ['damage', 'dps', 'heal', 'armor', 'knockback']) {
+      if (skill[key] !== undefined) skill[key] = Math.round(skill[key] * damageMult);
+    }
+    for (const key of ['radius', 'hitRadius', 'distance']) {
+      if (skill[key] !== undefined) skill[key] = Math.round(skill[key] * rangeMult);
+    }
+    for (const key of ['duration', 'shieldDuration', 'stunDuration', 'invincibleDuration']) {
+      if (skill[key] !== undefined) skill[key] = skill[key] * (1 + Math.min(0.35, step * 0.05));
+    }
+    if (skill.pulses !== undefined) skill.pulses = skill.pulses + Math.min(3, Math.floor(step / 3));
+    skill.cooldown = Math.max(1.2, base.cooldown * cooldownMult);
+    return skill;
+  }
+
+  upgradeSkill(id, player) {
+    const skill = this.skills[id];
+    if (!skill) return false;
+    const wasUnlocked = this.unlocked[id];
+    this.unlocked[id] = true;
+    this.levels[id] = Math.max(1, this.levels[id] || 0) + (wasUnlocked ? 1 : 0);
+    if (!wasUnlocked) this.cooldowns[id] = 0;
+    if (player && game.floatingTexts) {
+      game.floatingTexts.push(new FloatingText(
+        player.x, player.y - player.radius - 30,
+        `${wasUnlocked ? '升级' : '解锁'} ${skill.name} Lv.${this.levels[id]}`, '#7cf', 18
+      ));
+    }
+    return true;
   }
 
   unlockSkill(id, player) {
@@ -930,6 +986,7 @@ class HeroSkillSystem {
     if (player.money < skill.price) return false;
     player.money -= skill.price;
     this.unlocked[id] = true;
+    this.levels[id] = Math.max(1, this.levels[id] || 1);
     this.cooldowns[id] = 0;
     game.floatingTexts.push(new FloatingText(
       player.x, player.y - player.radius - 26,
@@ -994,7 +1051,7 @@ class HeroSkillSystem {
   }
 
   useSkill(id, player) {
-    const skill = this.skills[id];
+    const skill = this.getEffectiveSkill(id);
     if (!skill || !this.unlocked[id]) return false;
 
     if (this.cooldowns[id] > 0) {
@@ -1254,7 +1311,7 @@ class HeroSkillSystem {
     const gap = 6;
 
     ids.forEach((id, i) => {
-      const skill = this.skills[id];
+      const skill = this.getEffectiveSkill(id) || this.skills[id];
       const x = startX + i * (size + gap);
       const unlocked = this.unlocked[id];
       const cooldown = this.cooldowns[id];
@@ -1268,7 +1325,7 @@ class HeroSkillSystem {
       ctx.textAlign = 'center';
       ctx.fillText(skill.keyLabel === 'Shift' ? 'S' : skill.keyLabel, x + size / 2, y + 13);
       ctx.font = '8px monospace';
-      ctx.fillText(skill.name.slice(0, 3), x + size / 2, y + 25);
+      ctx.fillText(unlocked ? `Lv.${this.getSkillLevel(id)}` : skill.name.slice(0, 3), x + size / 2, y + 25);
       if (!unlocked) {
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
         ctx.fillRect(x, y, size, size);
@@ -1295,6 +1352,8 @@ class UpgradeSystem {
     this.open = false;
     this.choices = [];
     this.allUpgrades = this.defineUpgrades();
+    this.pendingLevelUps = 0;
+    this.choiceTitle = '角色升级';
   }
 
   defineUpgrades() {
@@ -1392,19 +1451,59 @@ class UpgradeSystem {
 
   showChoices(player) {
     this.open = true;
-    // 随机抽取3个不重复的升级
-    const pool = [...this.allUpgrades];
+    this.choiceTitle = player && player.level ? `角色升级 Lv.${player.level}` : '角色升级';
+    const statPool = this.allUpgrades.map(upg => ({ category: 'stat', ...upg }));
+    const skillPool = this.getSkillUpgradeChoices(player);
+    const pool = [...statPool, ...skillPool];
     this.choices = [];
-    for (let i = 0; i < 3 && pool.length > 0; i++) {
+    if (skillPool.length > 0) {
+      const upgradePool = skillPool.filter(choice => choice.id.startsWith('skill_upgrade'));
+      const guaranteedPool = upgradePool.length > 0 ? upgradePool : skillPool;
+      const skillChoice = guaranteedPool[Math.floor(Math.random() * guaranteedPool.length)];
+      this.choices.push(skillChoice);
+      const usedId = skillChoice.id;
+      const usedIndex = pool.findIndex(c => c.id === usedId);
+      if (usedIndex >= 0) pool.splice(usedIndex, 1);
+    }
+    while (this.choices.length < 3 && pool.length > 0) {
       const idx = Math.floor(Math.random() * pool.length);
       this.choices.push(pool.splice(idx, 1)[0]);
     }
+  }
+
+  queueLevelUp(player) {
+    this.pendingLevelUps = Math.max(this.pendingLevelUps, player.pendingLevelUps || 1);
+    if (!this.open) {
+      this.showChoices(player);
+    }
+  }
+
+  getSkillUpgradeChoices(player) {
+    if (!game.heroSkillSystem) return [];
+    return Object.keys(HERO_SKILL_DATA).map(id => {
+      const base = HERO_SKILL_DATA[id];
+      const level = game.heroSkillSystem.getSkillLevel(id);
+      const locked = level <= 0;
+      return {
+        id: `${locked ? 'skill_unlock' : 'skill_upgrade'}_${id}`,
+        category: 'skill',
+        skillId: id,
+        name: locked ? `解锁 ${base.name}` : `${base.name} Lv.${level + 1}`,
+        desc: locked ? base.desc : '强化威力/范围，缩短冷却',
+        rarity: locked ? 2 : Math.min(3, 1 + Math.floor(level / 3)),
+        apply: (p) => game.heroSkillSystem.upgradeSkill(id, p),
+      };
+    });
   }
 
   apply(choiceIndex) {
     if (choiceIndex < 0 || choiceIndex >= this.choices.length) return false;
     const upg = this.choices[choiceIndex];
     upg.apply(game.player);
+    if (this.pendingLevelUps > 0) {
+      this.pendingLevelUps--;
+      game.player.pendingLevelUps = Math.max(0, (game.player.pendingLevelUps || 0) - 1);
+    }
     this.open = false;
     this.choices = [];
 
@@ -1414,6 +1513,9 @@ class UpgradeSystem {
       `获得: ${upg.name}`, this.getRarityColor(upg.rarity), 28, 2000
     ));
 
+    if (this.pendingLevelUps > 0) {
+      this.showChoices(game.player);
+    }
     return true;
   }
 
@@ -1471,7 +1573,7 @@ class UpgradeSystem {
     ctx.fillStyle = '#fff';
     ctx.font = mobile ? 'bold 22px monospace' : 'bold 28px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('选择一项升级', canvas.width / 2, mobile ? 54 : canvas.height / 2 - 180);
+    ctx.fillText(this.choiceTitle || '角色升级', canvas.width / 2, mobile ? 54 : canvas.height / 2 - 180);
     ctx.font = mobile ? '12px monospace' : '14px monospace';
     ctx.fillStyle = '#888';
     ctx.fillText(mobile ? '点选卡片' : '按 1 / 2 / 3 选择 | 点击选择', canvas.width / 2, mobile ? 76 : canvas.height / 2 - 155);
@@ -1498,7 +1600,8 @@ class UpgradeSystem {
       ctx.fillStyle = rarityColor;
       ctx.font = mobile ? 'bold 10px monospace' : 'bold 11px monospace';
       ctx.textAlign = 'left';
-      ctx.fillText(`[${this.getRarityName(c.rarity)}]`, x + 12, cardY + 22);
+      const tag = c.category === 'skill' ? '技能' : this.getRarityName(c.rarity);
+      ctx.fillText(`[${tag}]`, x + 12, cardY + 22);
 
       // 升级名称
       ctx.fillStyle = '#fff';
@@ -1605,11 +1708,7 @@ class WaveManager {
     // 自动存档
     if (game.saveSystem) game.saveSystem.save(game);
 
-    setTimeout(() => {
-      if (game.upgradeSystem) {
-        game.upgradeSystem.showChoices(game.player);
-      }
-    }, 500);
+    // 升级不再按波次发放；击杀经验触发角色升级后再弹出选择。
   }
 
   update(dt) {
@@ -1909,6 +2008,10 @@ class SaveSystem {
     const data = {
       wave: game.waveManager.wave,
       money: game.player.money,
+      playerLevel: game.player.level || 1,
+      playerXP: game.player.xp || 0,
+      playerXPToNext: game.player.xpToNext || 1,
+      pendingLevelUps: game.player.pendingLevelUps || 0,
       ownedWeapons: game.player.weapons.map(w => w.data.id),
       equipped: game.player.equipped,
       activeSlot: game.player.activeSlot,
@@ -1930,6 +2033,7 @@ class SaveSystem {
       })),
       upgrades: game.player.upgrades,
       unlockedSkills: game.heroSkillSystem ? game.heroSkillSystem.getUnlockedIds() : [],
+      skillProgress: game.heroSkillSystem ? game.heroSkillSystem.getSkillProgress() : [],
       turrets: game.turretManager ? game.turretManager.serialize() : [],
       pets: game.petManager ? game.petManager.serialize() : [],
       score: game.score,
