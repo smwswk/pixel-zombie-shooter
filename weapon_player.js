@@ -351,6 +351,7 @@ class Weapon {
       baseDmg *= player.buffs.damage.mult;
     }
     const dmg = calculateDamage(baseDmg, player, isCrit);
+    if (game.audio) game.audio.playWeapon(effectiveData);
 
     // 消耗弹药
     if (this.maxAmmo !== Infinity) {

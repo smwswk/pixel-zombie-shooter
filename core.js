@@ -907,3 +907,208 @@ class Map {
     return points;
   }
 }
+
+// ------------------------------------------------------------------
+// 程序化音频：无需外部素材，移动端首次触摸/按键后解锁
+// ------------------------------------------------------------------
+class AudioSystem {
+  constructor() {
+    this.ctx = null;
+    this.masterGain = null;
+    this.musicGain = null;
+    this.sfxGain = null;
+    this.supported = true;
+    this.muted = false;
+    this.bgmActive = false;
+    this.bgmTimer = 0;
+    this.bgmStep = 0;
+    this.lastPlayed = {};
+    this.eventLog = [];
+    this.masterVolume = 0.75;
+    this.musicVolume = 0.22;
+    this.sfxVolume = 0.55;
+  }
+
+  _audioContextCtor() {
+    if (typeof window !== 'undefined') {
+      return window.AudioContext || window.webkitAudioContext;
+    }
+    return typeof AudioContext !== 'undefined' ? AudioContext : null;
+  }
+
+  _ensure() {
+    if (this.muted) return false;
+    if (this.ctx) return true;
+    const AudioCtor = this._audioContextCtor();
+    if (!AudioCtor) {
+      this.supported = false;
+      return false;
+    }
+    try {
+      this.ctx = new AudioCtor();
+      this.masterGain = this.ctx.createGain();
+      this.musicGain = this.ctx.createGain();
+      this.sfxGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.masterVolume;
+      this.musicGain.gain.value = this.musicVolume;
+      this.sfxGain.gain.value = this.sfxVolume;
+      this.musicGain.connect(this.masterGain);
+      this.sfxGain.connect(this.masterGain);
+      this.masterGain.connect(this.ctx.destination);
+      return true;
+    } catch (err) {
+      this.supported = false;
+      return false;
+    }
+  }
+
+  unlock() {
+    if (!this._ensure()) return false;
+    if (this.ctx.state === 'suspended' && this.ctx.resume) {
+      this.ctx.resume();
+    }
+    return true;
+  }
+
+  startBGM() {
+    this.bgmActive = true;
+    this.bgmTimer = 0;
+  }
+
+  stopBGM() {
+    this.bgmActive = false;
+  }
+
+  toggleMuted() {
+    this.muted = !this.muted;
+    if (this.masterGain) {
+      this.masterGain.gain.value = this.muted ? 0 : this.masterVolume;
+    }
+    return this.muted;
+  }
+
+  update(dt) {
+    if (!this.bgmActive || this.muted) return;
+    if (!this._ensure()) return;
+    this.bgmTimer -= dt;
+    while (this.bgmTimer <= 0) {
+      this._playBGMStep();
+      this.bgmTimer += 0.38;
+    }
+  }
+
+  _time() {
+    if (this.ctx && Number.isFinite(this.ctx.currentTime)) return this.ctx.currentTime;
+    return (typeof performance !== 'undefined' && performance.now) ? performance.now() / 1000 : Date.now() / 1000;
+  }
+
+  _emit(id, minInterval = 0.03) {
+    if (this.muted) return false;
+    const now = this._time();
+    if (this.lastPlayed[id] !== undefined && now - this.lastPlayed[id] < minInterval) return false;
+    this.lastPlayed[id] = now;
+    this.eventLog.push({ id, time: now });
+    if (this.eventLog.length > 160) this.eventLog.shift();
+    return true;
+  }
+
+  _createTone({ freq = 440, endFreq = null, duration = 0.12, type = 'square', gain = 0.12, dest = this.sfxGain }) {
+    if (!this._ensure()) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const amp = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    if (endFreq) osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), t + duration);
+    amp.gain.setValueAtTime(gain, t);
+    amp.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.connect(amp);
+    amp.connect(dest);
+    osc.start(t);
+    osc.stop(t + duration + 0.02);
+  }
+
+  _createNoise({ duration = 0.08, gain = 0.08, filter = 1200 } = {}) {
+    if (!this._ensure() || !this.ctx.createBufferSource) return;
+    const sampleRate = this.ctx.sampleRate || 44100;
+    const length = Math.max(1, Math.floor(sampleRate * duration));
+    const buffer = this.ctx.createBuffer(1, length, sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+      data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+    }
+    const src = this.ctx.createBufferSource();
+    const amp = this.ctx.createGain();
+    src.buffer = buffer;
+    amp.gain.setValueAtTime(gain, this.ctx.currentTime);
+    amp.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+    if (this.ctx.createBiquadFilter) {
+      const biquad = this.ctx.createBiquadFilter();
+      biquad.type = 'lowpass';
+      biquad.frequency.setValueAtTime(filter, this.ctx.currentTime);
+      src.connect(biquad);
+      biquad.connect(amp);
+    } else {
+      src.connect(amp);
+    }
+    amp.connect(this.sfxGain);
+    src.start(this.ctx.currentTime);
+    src.stop(this.ctx.currentTime + duration + 0.02);
+  }
+
+  playWeapon(weaponData = {}) {
+    const id = weaponData.id || 'weapon';
+    const continuous = weaponData.continuous || id === 'flamethrower' || id === 'laser';
+    if (!this._emit(`weapon:${id}`, continuous ? 0.16 : 0.035)) return false;
+    const loud = weaponData.explosive > 0 || id.includes('rocket') || id.includes('nuke');
+    if (id === 'laser' || weaponData.special === 'storm_chain') {
+      this._createTone({ freq: 760, endFreq: 1180, duration: 0.09, type: 'sawtooth', gain: 0.075 });
+      return true;
+    }
+    if (id === 'flamethrower' || weaponData.special === 'plasma_chain_flame') {
+      this._createNoise({ duration: 0.13, gain: 0.055, filter: 720 });
+      this._createTone({ freq: 120, endFreq: 70, duration: 0.11, type: 'sawtooth', gain: 0.035 });
+      return true;
+    }
+    if (weaponData.melee || id === 'chainsaw') {
+      this._createTone({ freq: 95, endFreq: 72, duration: 0.11, type: 'sawtooth', gain: 0.08 });
+      return true;
+    }
+    this._createNoise({ duration: loud ? 0.16 : 0.075, gain: loud ? 0.14 : 0.075, filter: loud ? 520 : 1500 });
+    this._createTone({
+      freq: loud ? 95 : (id === 'sniper' || id === 'railgun' ? 180 : 260),
+      endFreq: loud ? 45 : 95,
+      duration: loud ? 0.18 : 0.08,
+      type: 'square',
+      gain: loud ? 0.13 : 0.06,
+    });
+    return true;
+  }
+
+  playZombie(kind = 'groan', type = 'normal') {
+    const interval = kind === 'attack' ? 0.18 : 0.08;
+    if (!this._emit(`zombie:${kind}:${type}`, interval)) return false;
+    const base = type === 'boss' || type === 'colossus' ? 62 : (type === 'runner' || type === 'spider' ? 150 : 92);
+    if (kind === 'death') {
+      this._createTone({ freq: base, endFreq: 38, duration: 0.24, type: 'sawtooth', gain: 0.07 });
+      this._createNoise({ duration: 0.12, gain: 0.045, filter: 500 });
+      return true;
+    }
+    if (kind === 'attack') {
+      this._createTone({ freq: base * 1.4, endFreq: base * 0.7, duration: 0.1, type: 'triangle', gain: 0.06 });
+      return true;
+    }
+    this._createTone({ freq: base, endFreq: base * 0.72, duration: 0.18, type: 'triangle', gain: 0.035 });
+    return true;
+  }
+
+  _playBGMStep() {
+    if (!this._emit(`music:${this.bgmStep % 8}`, 0.01)) return;
+    const bass = [55, 55, 65, 55, 82, 73, 65, 49][this.bgmStep % 8];
+    this._createTone({ freq: bass, endFreq: bass * 0.82, duration: 0.22, type: 'sawtooth', gain: 0.045, dest: this.musicGain });
+    if (this.bgmStep % 4 === 2) {
+      this._createTone({ freq: bass * 4, endFreq: bass * 5, duration: 0.12, type: 'square', gain: 0.018, dest: this.musicGain });
+    }
+    this.bgmStep++;
+  }
+}

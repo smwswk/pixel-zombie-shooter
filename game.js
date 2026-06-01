@@ -67,6 +67,7 @@ function initGame() {
     comboSystem: null,
     relicSystem: null,
     saveSystem: null,
+    audio: null,
     input: null,
     pickups: [],
     vehicleManager: null,
@@ -87,6 +88,9 @@ function initGame() {
   // 初始化输入
   game.input = new Input(canvas);
   window.INPUT = game.input;
+
+  game.audio = new AudioSystem();
+  game.audio.startBGM();
 
   // 初始化地图
   game.map = new Map(canvas.width * 2, canvas.height * 2, 40);
@@ -254,6 +258,17 @@ function initGame() {
 function bindEvents() {
   // 键盘事件
   window.addEventListener('keydown', (e) => {
+    if (game.audio) game.audio.unlock();
+    if (e.key === 'm' || e.key === 'M') {
+      if (game.audio) {
+        const muted = game.audio.toggleMuted();
+        game.floatingTexts.push(new FloatingText(
+          game.player.x, game.player.y - game.player.radius - 26,
+          muted ? '音频关闭' : '音频开启', '#9cf', 16
+        ));
+      }
+    }
+
     // Tab键：装备界面
     if (e.key === 'Tab') {
       e.preventDefault();
@@ -321,6 +336,7 @@ function bindEvents() {
 
   // 鼠标点击（商店/升级菜单/圣遗物）
   canvas.addEventListener('mousedown', (e) => {
+    if (game.audio) game.audio.unlock();
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -392,6 +408,7 @@ function bindEvents() {
   };
 
   canvas.addEventListener('touchstart', (e) => {
+    if (game.audio) game.audio.unlock();
     if (!e.changedTouches || e.changedTouches.length === 0) return;
     const rect = canvas.getBoundingClientRect();
     for (const touch of Array.from(e.changedTouches)) {
@@ -493,6 +510,8 @@ function restartGame() {
   game.particles = new ParticleSystem();
   game.decalSystem = new DecalSystem();
   game.metaProgression = game.metaProgression || new MetaProgression();
+  game.audio = new AudioSystem();
+  game.audio.startBGM();
   game.shopSystem = new ShopSystem();
   game.heroSkillSystem = new HeroSkillSystem();
   game.upgradeSystem = new UpgradeSystem();
@@ -696,6 +715,9 @@ function update(dt) {
   handleMobileActions();
   if (game.heroSkillSystem) {
     game.heroSkillSystem.update(dt);
+  }
+  if (game.audio) {
+    game.audio.update(dt);
   }
 
   // 2. 圣遗物选择中，只更新视觉效果

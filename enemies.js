@@ -371,6 +371,7 @@ class Enemy {
       // ---- 攻击（碰撞即伤害，有冷却）----
       if (d < this.attackRange + p.radius && this.attackCooldown <= 0) {
         p.takeDamage(this.damage);
+        if (game.audio) game.audio.playZombie('attack', this.type);
         this.attackCooldown = this.attackInterval;
       }
       if (this.attackCooldown > 0) this.attackCooldown -= dt;
@@ -554,6 +555,7 @@ class Enemy {
     // 普通攻击（近战）
     if (d < this.attackRange + p.radius && this.attackCooldown <= 0) {
       p.takeDamage(this.damage);
+      if (game.audio) game.audio.playZombie('attack', this.type);
       this.attackCooldown = this.attackInterval;
     }
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
@@ -616,6 +618,7 @@ class Enemy {
 
     if (d < this.attackRange + p.radius && this.attackCooldown <= 0) {
       p.takeDamage(this.damage);
+      if (game.audio) game.audio.playZombie('attack', this.type);
       this.attackCooldown = this.attackInterval;
     }
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
@@ -638,6 +641,7 @@ class Enemy {
         }
       } else if (this.attackCooldown <= 0) {
         turret.takeDamage(this.damage);
+        if (game.audio) game.audio.playZombie('attack', this.type);
         this.attackCooldown = this.attackInterval;
         if (game.floatingTexts) {
           game.floatingTexts.push(new FloatingText(turret.x, turret.y - turret.radius - 16, '拆塔', '#d6e85a', 12));
@@ -659,6 +663,7 @@ class Enemy {
     const p = game.player;
     if (playerD < this.attackRange + p.radius && this.attackCooldown <= 0) {
       p.takeDamage(this.damage);
+      if (game.audio) game.audio.playZombie('attack', this.type);
       this.attackCooldown = this.attackInterval;
     }
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
@@ -689,6 +694,7 @@ class Enemy {
     const pd = dist(this.x, this.y, player.x, player.y);
     if (pd < radius + player.radius) {
       player.takeDamage(this.damage * (this.bossPhase >= 3 ? 1.15 : 0.85));
+      if (game.audio) game.audio.playZombie('attack', this.type);
       const a = angleTo(this.x, this.y, player.x, player.y);
       const knock = 52;
       const nx = player.x + Math.cos(a) * knock;
@@ -779,6 +785,7 @@ class Enemy {
     const pd = dist(this.x, this.y, p.x, p.y);
     if (pd < this.radius + p.radius + 5) {
       p.takeDamage(this.damage * 1.5);
+      if (game.audio) game.audio.playZombie('attack', this.type);
     }
 
     // 冲锋拖尾粒子
@@ -810,6 +817,7 @@ class Enemy {
     const waveThickness = 15;
     if (Math.abs(pd - this.bossShockwaveRadius) < waveThickness && !this.bossShockwaveHitPlayer) {
       p.takeDamage(20);
+      if (game.audio) game.audio.playZombie('attack', this.type);
       this.bossShockwaveHitPlayer = true;
     }
 
@@ -1144,6 +1152,7 @@ class Enemy {
 
   die() {
     this.alive = false;
+    if (game.audio) game.audio.playZombie('death', this.type);
 
     // Bomber：死后对范围内所有敌人（包括其他僵尸）造成 60 伤害
     if (this.type === "bomber") {
